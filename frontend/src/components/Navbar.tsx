@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, ShieldAlert, ShoppingBag, Activity, RefreshCw, KeyRound } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, ShoppingBag, Activity, RefreshCw, KeyRound, User, LogOut } from 'lucide-react';
 import { wafIntegration } from '../services/wafIntegration';
 
 interface Props {
@@ -7,9 +7,20 @@ interface Props {
   setActiveTab: (tab: 'store' | 'monitoring') => void;
   cartCount: number;
   openCart: () => void;
+  currentUser: string | null;
+  onOpenAuth: () => void;
+  onSignOut: () => void;
 }
 
-export const Navbar: React.FC<Props> = ({ activeTab, setActiveTab, cartCount, openCart }) => {
+export const Navbar: React.FC<Props> = ({
+  activeTab,
+  setActiveTab,
+  cartCount,
+  openCart,
+  currentUser,
+  onOpenAuth,
+  onSignOut
+}) => {
   const [token, setToken] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -79,7 +90,7 @@ export const Navbar: React.FC<Props> = ({ activeTab, setActiveTab, cartCount, op
           </button>
         </div>
 
-        {/* Right side controls: Token status + Cart */}
+        {/* Right side controls: Token status + User Auth + Cart */}
         <div className="flex items-center gap-3">
           {/* AWS WAF Token Diagnostics Badge */}
           <div className="hidden lg:flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs">
@@ -112,6 +123,31 @@ export const Navbar: React.FC<Props> = ({ activeTab, setActiveTab, cartCount, op
               </div>
             )}
           </div>
+
+          {/* User Profile / Sign In Button */}
+          {currentUser ? (
+            <div className="flex items-center gap-2 bg-slate-900 border border-indigo-500/30 rounded-xl px-3 py-1.5 text-xs">
+              <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] font-bold text-white">
+                {currentUser[0].toUpperCase()}
+              </div>
+              <span className="text-white font-medium truncate max-w-[100px]">{currentUser}</span>
+              <button
+                onClick={onSignOut}
+                title="Sign Out"
+                className="p-1 text-slate-400 hover:text-rose-400 rounded transition-colors"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={onOpenAuth}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-semibold transition-all hover:scale-105"
+            >
+              <User className="w-4 h-4 text-cyan-400" />
+              <span>Sign In</span>
+            </button>
+          )}
 
           {/* Cart Trigger */}
           <button

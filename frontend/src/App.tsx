@@ -7,6 +7,7 @@ import { ProductCatalog } from './components/ProductCatalog';
 import { CartDrawer } from './components/CartDrawer';
 import { CheckoutModal } from './components/CheckoutModal';
 import { WafCaptchaModal } from './components/WafCaptchaModal';
+import { AuthModal } from './components/AuthModal';
 import { MonitoringDashboard } from './pages/MonitoringDashboard';
 
 export function App() {
@@ -16,6 +17,8 @@ export function App() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<string | null>(null);
 
   // WAF Challenge Modal State
   const [isCaptchaOpen, setIsCaptchaOpen] = useState(false);
@@ -99,6 +102,9 @@ export function App() {
         setActiveTab={setActiveTab}
         cartCount={totalCartCount}
         openCart={() => setIsCartOpen(true)}
+        currentUser={currentUser}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onSignOut={() => setCurrentUser(null)}
       />
 
       {/* Main Body */}
@@ -137,6 +143,13 @@ export function App() {
           setCart([]);
           loadProducts(); // refresh remaining stock
         }}
+      />
+
+      {/* Authentication Modal (Sign In / Register) */}
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        onAuthSuccess={(user) => setCurrentUser(user)}
       />
 
       {/* AWS WAF Interactive CAPTCHA Puzzle Challenge Modal */}
