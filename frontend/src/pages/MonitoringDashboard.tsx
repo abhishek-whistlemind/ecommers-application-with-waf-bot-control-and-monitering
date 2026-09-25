@@ -60,7 +60,7 @@ export const MonitoringDashboard: React.FC = () => {
             setEvents(payload.data.recent_events || []);
           } else if (payload.type === 'NEW_EVENT') {
             const newEvent: WafEvent = payload.event;
-            setEvents((prev) => [newEvent, ...prev.slice(0, 199)]);
+            setEvents((prev) => [newEvent, ...prev.filter((e) => e.id !== newEvent.id)].slice(0, 200));
             if (payload.stats) {
               setStats((prev) => ({
                 ...prev,
@@ -444,9 +444,9 @@ export const MonitoringDashboard: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredEvents.map((evt) => (
+                filteredEvents.map((evt, idx) => (
                   <tr
-                    key={evt.id}
+                    key={`${evt.id}-${idx}`}
                     onClick={() => setSelectedEvent(evt)}
                     className="hover:bg-slate-800/40 cursor-pointer transition-colors"
                   >

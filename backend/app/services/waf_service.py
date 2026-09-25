@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Set
 from fastapi import WebSocket
 from ..config import settings
 from ..models.waf_event import WafEvent, WafStats
+from ..database import db_insert_waf_event, db_get_recent_waf_events, db_clear_waf_events
 
 
 class WafService:
@@ -32,6 +33,30 @@ class WafService:
         self.rule_counts: Dict[str, int] = {}
         self.bot_category_counts: Dict[str, int] = {}
 
+        # Load persisted historical events from SQLite
+        self._load_from_db()
+
+    def _load_from_db(self):
+        saved_events = db_get_recent_waf_events(self.max_events)
+        for raw in reversed(saved_events):
+            evt = WafEvent(**raw)
+            self.events.append(evt)
+            self.total_requests += 1
+            if evt.waf_action == "ALLOW":
+                self.allowed_count += 1
+            elif evt.waf_action == "BLOCK":
+                self.blocked_count += 1
+            elif evt.waf_action == "CHALLENGE":
+                self.challenged_count += 1
+
+            if evt.bot_category == "Legitimate Human":
+                self.human_count += 1
+            else:
+                self.bot_count += 1
+
+            self.rule_counts[evt.rule_name] = self.rule_counts.get(evt.rule_name, 0) + 1
+            self.bot_category_counts[evt.bot_category] = self.bot_category_counts.get(evt.bot_category, 0) + 1
+
     async def connect_ws(self, websocket: WebSocket):
         await websocket.accept()
         self.active_websockets.add(websocket)
@@ -46,6 +71,12 @@ class WafService:
         self.events.append(event)
         if len(self.events) > self.max_events:
             self.events.pop(0)
+
+        # Persist to SQLite
+        try:
+            db_insert_waf_event(event.model_dump())
+        except Exception as e:
+            print(f"Error persisting WAF event to DB: {e}")
 
         # Update stats
         self.total_requests += 1
@@ -335,5 +366,9 @@ class WafService:
         self.bot_category_counts.clear()
         self.ip_request_history.clear()
         self.ip_auth_failures.clear()
+        try:
+            db_clear_waf_events()
+        except Exception as e:
+            print(f"Error clearing WAF events from DB: {e}")
 
 waf_service = WafService()
