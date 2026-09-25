@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS WAFv2 WebACL with Bot Control Targeted Inspection Tier and JavaScript Application Integration for NexusCommerce'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: 'production'
+    Description: 'Deployment environment name'
+  TokenDomain:
+    Type: String
+    Default: 'token.nexuscommerce.com'
+    Description: 'Custom domain configured in AWS WAF for acquiring telemetry tokens'
+
+Resources:
+  # AWS WAFv2 WebACL with AWSManagedRulesBotControlRuleSet (Targeted)
+  CommerceWebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub '${EnvironmentName}-NexusCommerce-BotControl-WebACL'
+      Scope: CLOUDFRONT  # or REGIONAL for ALB
+      Description: 'Shields E-Commerce against scrapers, scalpers, and credential stuffers'
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub '${EnvironmentName}-NexusCommerce-WebACL-Metric'
+      TokenDomains:
+        - !Ref TokenDomain
+      Rules:
+        # Rule 1: AWS WAF Bot Control Rule Set (Targeted Tier)
+        - Name: AWSManagedRulesBotControlRuleSet
+          Priority: 10
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesBotControlRuleSet
+              ManagedRuleGroupConfigs:
+                - AWSManagedRulesBotControlRuleSet:
+                    InspectionLevel: TARGETED  # Targeted protection enables JS SDK telemetry & CAPTCHA
+              RuleActionOverrides:
+                # Issue CAPTCHA or Challenge on missing tokens for critical endpoints
+                - ActionToUse:
+                    Challenge: {}
+                  Name: CategoryScraping
+                - ActionToUse:
+                    Challenge: {}
+                  Name: SignalNonBrowserUserAgent
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: 'AWSManagedRulesBotControlRuleSetMetric'
+
+        # Rule 2: Account Takeover Prevention (ATP) - Credential Stuffing Shield
+        - Name: AWSManagedRulesATPRuleSet
+          Priority: 20
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesATPRuleSet
+              ManagedRuleGroupConfigs:
+                - AWSManagedRulesATPRuleSet:
+                    LoginPath: '/api/auth/login'
+                    RequestInspection:
+                      PayloadType: JSON
+                      UsernameField:
+                        Identifier: '/username'
+                      PasswordField:
+                        Identifier: '/password'
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: 'AWSManagedRulesATPRuleSetMetric'
+
+        # Rule 3: Rate-based Rule against Burst Scrapers
+        - Name: RateLimitGeneralScrapers
+          Priority: 30
+          Action:
+            Block: {}
+          Statement:
+            RateBasedStatement:
+              Limit: 300
+              AggregateKeyType: IP
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: 'RateLimitGeneralScrapersMetric'
+
+Outputs:
+  WebACLArn:
+    Description: 'ARN of the deployed AWS WAF WebACL'
+    Value: !GetAtt CommerceWebACL.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-WebACLArn'
+  WebACLId:
+    Description: 'ID of the deployed AWS WAF WebACL'
+    Value: !GetAtt CommerceWebACL.Id
