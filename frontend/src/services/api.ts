@@ -1,7 +1,8 @@
 import { wafIntegration } from './wafIntegration';
-import type { Product, WafStats } from '../types';
+import { getApiBase } from './config';
+import type { Product, WafStats, WafEvent } from '../types';
 
-const API_BASE = 'http://127.0.0.1:8000';
+const API_BASE = getApiBase();
 
 export const api = {
   async getProducts(category?: string, flashOnly?: boolean, search?: string): Promise<Product[]> {
@@ -13,7 +14,7 @@ export const api = {
     const res = await wafIntegration.fetch(`${API_BASE}/api/products?${params.toString()}`);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.reason || err.error || 'Failed to fetch products');
+      throw new Error(err.detail || err.reason || err.error || 'Failed to fetch products');
     }
     return res.json();
   },
@@ -32,7 +33,7 @@ export const api = {
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.reason || data.error || 'Checkout failed');
+      throw new Error(data.detail || data.reason || data.error || 'Checkout failed');
     }
     return data;
   },
@@ -46,15 +47,22 @@ export const api = {
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.reason || data.error || 'Login failed');
+      throw new Error(data.detail || data.reason || data.error || 'Login failed');
     }
     return data;
   },
 
-  async getWafStats(): Promise<WafStats> {
-    const res = await fetch(`${API_BASE}/api/monitoring/stats`);
+  async getWafStats(limit: number = 100): Promise<WafStats> {
+    const res = await fetch(`${API_BASE}/api/monitoring/stats?limit=${limit}`);
     if (!res.ok) throw new Error('Failed to fetch WAF stats');
     return res.json();
+  },
+
+  async getAllEvents(limit: number = 250): Promise<WafEvent[]> {
+    const res = await fetch(`${API_BASE}/api/monitoring/events?limit=${limit}`);
+    if (!res.ok) throw new Error('Failed to fetch WAF events');
+    const data = await res.json();
+    return data.events || [];
   },
 
   async clearStats(): Promise<void> {

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { api } from '../services/api';
+import { getApiBase } from '../services/config';
 import { X, Lock, User, ShieldCheck, AlertCircle, CheckCircle2, RotateCw, Key } from 'lucide-react';
 
 interface Props {
@@ -34,7 +35,7 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onAuthSuccess }) =
         }, 800);
       } else {
         // Register flow
-        const res = await fetch('http://127.0.0.1:8000/api/auth/register', {
+        const res = await fetch(`${getApiBase()}/api/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password })

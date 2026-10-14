@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { WafEvent, WafStats } from '../types';
 import { api } from '../services/api';
+import { getWsUrl } from '../services/config';
 import {
   ShieldCheck,
   Activity,
@@ -35,15 +36,36 @@ export const MonitoringDashboard: React.FC = () => {
   const [wsConnected, setWsConnected] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'ALLOW' | 'BLOCK' | 'CHALLENGE'>('ALL');
   const [isSimulating, setIsSimulating] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
   const [simMessage, setSimMessage] = useState<string>('');
   const [selectedEvent, setSelectedEvent] = useState<WafEvent | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
 
+  const handleReload = async () => {
+    setIsReloading(true);
+    try {
+      const [statsData, allEvents] = await Promise.all([
+        api.getWafStats(250),
+        api.getAllEvents(250).catch(() => [])
+      ]);
+      setStats(statsData);
+      if (allEvents && allEvents.length > 0) {
+        setEvents(allEvents);
+      } else if (statsData.recent_events && statsData.recent_events.length > 0) {
+        setEvents(statsData.recent_events);
+      }
+    } catch (err) {
+      console.error('Failed to reload WAF telemetry:', err);
+    } finally {
+      setTimeout(() => setIsReloading(false), 350);
+    }
+  };
+
   // Initialize WebSocket and polling fallback
   useEffect(() => {
     const connectWebSocket = () => {
-      const wsUrl = 'ws://127.0.0.1:8000/ws/telemetry';
+      const wsUrl = getWsUrl();
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -60,7 +82,7 @@ export const MonitoringDashboard: React.FC = () => {
             setEvents(payload.data.recent_events || []);
           } else if (payload.type === 'NEW_EVENT') {
             const newEvent: WafEvent = payload.event;
-            setEvents((prev) => [newEvent, ...prev.filter((e) => e.id !== newEvent.id)].slice(0, 200));
+            setEvents((prev) => [newEvent, ...prev.filter((e) => e.id !== newEvent.id)].slice(0, 250));
             if (payload.stats) {
               setStats((prev) => ({
                 ...prev,
@@ -86,10 +108,17 @@ export const MonitoringDashboard: React.FC = () => {
 
     connectWebSocket();
 
-    // Initial HTTP fetch
-    api.getWafStats().then((data) => {
-      setStats(data);
-      setEvents(data.recent_events || []);
+    // Initial HTTP fetch - fetch all records
+    Promise.all([
+      api.getWafStats(250),
+      api.getAllEvents(250).catch(() => [])
+    ]).then(([statsData, allEvents]) => {
+      setStats(statsData);
+      if (allEvents && allEvents.length > 0) {
+        setEvents(allEvents);
+      } else if (statsData.recent_events) {
+        setEvents(statsData.recent_events);
+      }
     }).catch(console.error);
 
     return () => {
@@ -178,6 +207,16 @@ export const MonitoringDashboard: React.FC = () => {
               {wsConnected ? 'LIVE STREAM' : 'OFFLINE'}
             </span>
           </div>
+
+          <button
+            onClick={handleReload}
+            disabled={isReloading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 text-xs font-semibold border border-cyan-800/80 transition-all hover:scale-105 disabled:opacity-50"
+            title="Fetch all records and reload dashboard stats"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isReloading ? 'animate-spin' : ''}`} />
+            {isReloading ? 'Fetching...' : 'Reload All Records'}
+          </button>
 
           <button
             onClick={handleClearLogs}
@@ -389,35 +428,52 @@ export const MonitoringDashboard: React.FC = () => {
       <div className="bg-slate-900/70 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl">
         <div className="p-6 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <Activity className="w-4 h-4 text-emerald-400" /> Live WAF Telemetry Stream
-            </h3>
+            <div className="flex items-center gap-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Activity className="w-4 h-4 text-emerald-400" /> Live WAF Telemetry Stream
+              </h3>
+              <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 border border-slate-700 font-mono text-cyan-400">
+                {filteredEvents.length} {filteredEvents.length === 1 ? 'record' : 'records'}
+              </span>
+            </div>
             <p className="text-xs text-slate-400 mt-0.5">
               Inspecting client IP, browser telemetry score, token validity & WAF rule actions
             </p>
           </div>
 
-          {/* Action Filter Pills */}
-          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-            {(['ALL', 'ALLOW', 'CHALLENGE', 'BLOCK'] as const).map((filter) => (
-              <button
-                key={filter}
-                onClick={() => setActiveFilter(filter)}
-                className={`px-3 py-1 rounded-lg font-semibold transition-all ${
-                  activeFilter === filter
-                    ? filter === 'BLOCK'
-                      ? 'bg-rose-600 text-white'
-                      : filter === 'CHALLENGE'
-                      ? 'bg-amber-600 text-white'
-                      : filter === 'ALLOW'
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-indigo-600 text-white'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                {filter}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleReload}
+              disabled={isReloading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-cyan-500/50 hover:text-cyan-400 text-slate-300 text-xs font-semibold transition-all hover:scale-105 disabled:opacity-50"
+              title="Refresh and fetch all records from server"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isReloading ? 'animate-spin text-cyan-400' : ''}`} />
+              <span className="hidden sm:inline">{isReloading ? 'Loading...' : 'Reload'}</span>
+            </button>
+
+            {/* Action Filter Pills */}
+            <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+              {(['ALL', 'ALLOW', 'CHALLENGE', 'BLOCK'] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setActiveFilter(filter)}
+                  className={`px-3 py-1 rounded-lg font-semibold transition-all ${
+                    activeFilter === filter
+                      ? filter === 'BLOCK'
+                        ? 'bg-rose-600 text-white'
+                        : filter === 'CHALLENGE'
+                        ? 'bg-amber-600 text-white'
+                        : filter === 'ALLOW'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-indigo-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {filter}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 

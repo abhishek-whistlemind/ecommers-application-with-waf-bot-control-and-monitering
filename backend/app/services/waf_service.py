@@ -121,7 +121,8 @@ class WafService:
             "bot_breakdown": self.bot_category_counts
         }
 
-    def get_stats(self) -> WafStats:
+    def get_stats(self, limit: int = 30) -> WafStats:
+        slice_events = self.events[-limit:] if limit else self.events
         return WafStats(
             total_requests=self.total_requests,
             allowed_count=self.allowed_count,
@@ -131,20 +132,24 @@ class WafService:
             bot_count=self.bot_count,
             top_rules=dict(sorted(self.rule_counts.items(), key=lambda item: item[1], reverse=True)[:8]),
             bot_breakdown=self.bot_category_counts,
-            recent_events=list(reversed(self.events[-30:]))
+            recent_events=list(reversed(slice_events))
         )
 
     def generate_token(self, client_ip: str, client_telemetry: Dict[str, Any] = None) -> str:
         """
         Creates a signed AWS WAF token simulating x-amzn-waf-action-token
-        Format: waf_<uuid>.<timestamp>.<hmac_signature>
+        Format: waf_tok_{token_id}:{timestamp}:{sanitized_ip}:{telemetry_hash}_{hmac_sig}
         """
         now = int(time.time())
         token_id = str(uuid.uuid4())[:8]
         telemetry_hash = hashlib.md5(json.dumps(client_telemetry or {}, sort_keys=True).encode()).hexdigest()[:6]
-        payload = f"{token_id}:{now}:{client_ip}:{telemetry_hash}"
+        # Sanitize IP: replace colons in IPv6 addresses with dots so the
+        # colon-delimited payload is always unambiguous during verification
+        safe_ip = (client_ip or "0.0.0.0").replace(":", ".")
+        payload = f"{token_id}:{now}:{safe_ip}:{telemetry_hash}"
         signature = hmac.new(settings.SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()[:12]
         return f"waf_tok_{payload}_{signature}"
+
 
     def verify_token(self, token: str, client_ip: str) -> tuple[bool, str, str]:
         """
@@ -155,29 +160,37 @@ class WafService:
             return False, "MISSING", "No AWS WAF action token provided"
 
         if not token.startswith("waf_tok_"):
-            # Check if it might be an external AWS real token or invalid format
+            # Not a simulator token – could be a real AWS WAF token (not yet supported)
             return False, "TAMPERED", "Invalid token signature format"
 
         try:
-            parts = token.replace("waf_tok_", "").split("_")
+            inner = token[len("waf_tok_"):]
+            # Use rsplit to only split on the LAST underscore (signature separator)
+            # This is safe even if client_ip happened to embed underscores
+            parts = inner.rsplit("_", 1)
             if len(parts) != 2:
                 return False, "TAMPERED", "Malformed token structure"
 
             payload, sig = parts[0], parts[1]
-            token_id, ts_str, orig_ip, _ = payload.split(":")
+
+            # Split at most 3 times so IPv6 addresses with embedded colons
+            # don't break unpacking (extra colons land in the last field)
+            token_id, ts_str, orig_ip, _ = payload.split(":", 3)
             timestamp = int(ts_str)
 
             # Check expiration (15 minutes)
             if time.time() - timestamp > 900:
                 return False, "EXPIRED", "Token expired (TTL 900s exceeded)"
 
-            # Verify signature
+            # Verify HMAC signature
             expected_sig = hmac.new(settings.SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()[:12]
             if not hmac.compare_digest(sig, expected_sig):
+                print(f"[WAF] Token HMAC mismatch. got={sig!r} expected={expected_sig!r} payload={payload!r}")
                 return False, "TAMPERED", "Cryptographic signature verification failed"
 
             return True, "VALID", "Token valid and verified"
         except Exception as e:
+            print(f"[WAF] verify_token exception: {e!r} token={token[:40]!r}")
             return False, "TAMPERED", f"Corrupt token: {str(e)}"
 
     def evaluate_request(

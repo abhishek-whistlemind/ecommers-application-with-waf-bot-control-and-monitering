@@ -9,15 +9,30 @@
  * 5. Seamless fallback between Live AWS WAF Token Domain and Local Development Simulator
  */
 
+import { getApiBase } from './config';
+
 type ChallengeCallback = (challengeData: {
   onSuccess: (token: string) => void;
   onCancel: () => void;
 }) => void;
 
+/**
+ * Helper to detect if a genuine AWS WAF SDK is present on window (not our local shim).
+ */
+function getRealAwsWafSdk(): { getToken: () => Promise<string> } | null {
+  if (typeof window === 'undefined') return null;
+  const sdk = (window as any).AwsWafIntegration;
+  if (!sdk || sdk._isNexusShim || typeof sdk.getToken !== 'function') {
+    return null;
+  }
+  return sdk;
+}
+
 class AwsWafService {
   private currentToken: string | null = null;
   private tokenExpiresAt: number = 0;
   private challengeHandler: ChallengeCallback | null = null;
+  private inFlightAcquire: Promise<string> | null = null;
   private telemetryData = {
     mouseMovements: 0,
     keystrokes: 0,
@@ -30,8 +45,46 @@ class AwsWafService {
   constructor() {
     this.initTelemetryListeners();
     this.generateCanvasEntropy();
-    // Initialize token automatically on page load
-    this.acquireToken();
+    // Wait for the real AWS WAF JS SDK (waf.js loaded with `defer`) to be ready
+    // before acquiring a token so we don't fall through to the local simulator.
+    this.initTokenWhenSdkReady();
+  }
+
+  /**
+   * Waits for window.AwsWafIntegration to be populated by the deferred waf.js
+   * script before calling acquireToken(). Falls back to the simulator after
+   * SDK_WAIT_TIMEOUT_MS if the real SDK never loads (e.g. in local dev).
+   */
+  private initTokenWhenSdkReady(SDK_WAIT_TIMEOUT_MS = 2_000) {
+    if (typeof window === 'undefined') return;
+
+    // If genuine AWS WAF SDK is already available, acquire immediately.
+    if (getRealAwsWafSdk()) {
+      this.acquireToken();
+      return;
+    }
+
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      this.acquireToken();
+    };
+
+    // Poll every 100 ms for genuine window.AwsWafIntegration to appear (set by waf.js)
+    const pollInterval = window.setInterval(() => {
+      if (getRealAwsWafSdk()) {
+        clearInterval(pollInterval);
+        clearTimeout(fallbackTimer);
+        settle();
+      }
+    }, 100);
+
+    // Hard timeout – fall back to simulator so the page still works in local dev
+    const fallbackTimer = window.setTimeout(() => {
+      clearInterval(pollInterval);
+      settle();
+    }, SDK_WAIT_TIMEOUT_MS);
   }
 
   private initTelemetryListeners() {
@@ -82,10 +135,21 @@ class AwsWafService {
    * Checks if live window.AwsWafIntegration exists, otherwise calls simulated endpoint
    */
   public async acquireToken(): Promise<string> {
-    // 1. Check live AWS WAF SDK if loaded globally
-    if ((window as any).AwsWafIntegration?.getToken) {
+    if (this.inFlightAcquire) {
+      return this.inFlightAcquire;
+    }
+    this.inFlightAcquire = this._doAcquireToken().finally(() => {
+      this.inFlightAcquire = null;
+    });
+    return this.inFlightAcquire;
+  }
+
+  private async _doAcquireToken(): Promise<string> {
+    // 1. Check genuine AWS WAF SDK if loaded globally (ignore our own shim)
+    const realSdk = getRealAwsWafSdk();
+    if (realSdk) {
       try {
-        const liveToken = await (window as any).AwsWafIntegration.getToken();
+        const liveToken = await realSdk.getToken();
         if (liveToken) {
           this.currentToken = liveToken;
           this.tokenExpiresAt = Date.now() + 14 * 60 * 1000;
@@ -99,7 +163,7 @@ class AwsWafService {
 
     // 2. Local / Simulator Mode
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/waf/acquire-token', {
+      const res = await fetch(`${getApiBase()}/api/waf/acquire-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -199,11 +263,14 @@ class AwsWafService {
 
 export const wafIntegration = new AwsWafService();
 
-// Expose on window object to match AWS documentation standard
+// Expose shim on window object to match AWS documentation standard, marked with _isNexusShim
 if (typeof window !== 'undefined') {
-  (window as any).AwsWafIntegration = (window as any).AwsWafIntegration || {
-    getToken: () => wafIntegration.getToken(),
-    hasToken: () => wafIntegration.hasToken(),
-    fetch: (input: RequestInfo | URL, init?: RequestInit) => wafIntegration.fetch(input, init)
-  };
+  if (!(window as any).AwsWafIntegration) {
+    (window as any).AwsWafIntegration = {
+      _isNexusShim: true,
+      getToken: () => wafIntegration.getToken(),
+      hasToken: () => wafIntegration.hasToken(),
+      fetch: (input: RequestInfo | URL, init?: RequestInit) => wafIntegration.fetch(input, init)
+    };
+  }
 }

@@ -6,6 +6,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request, Response
 from typing import Dict, Any
 from ..services.waf_service import waf_service
 from ..models.waf_event import AttackSimulationRequest, WafStats
+from ..database import db_reset_inventory, db_get_recent_waf_events
 
 router = APIRouter(tags=["monitoring"])
 
@@ -24,16 +25,20 @@ async def websocket_telemetry(websocket: WebSocket):
         waf_service.disconnect_ws(websocket)
 
 @router.get("/api/monitoring/stats", response_model=WafStats)
-async def get_stats():
-    return waf_service.get_stats()
+async def get_stats(limit: int = 100):
+    return waf_service.get_stats(limit=limit)
 
 @router.get("/api/monitoring/events")
-async def get_events():
-    return {"events": waf_service.events[-50:]}
+async def get_events(limit: int = 250):
+    db_events = db_get_recent_waf_events(limit)
+    if db_events:
+        return {"events": db_events}
+    return {"events": [e.model_dump() for e in reversed(waf_service.events[-limit:])]}
 
 @router.post("/api/monitoring/clear")
 async def clear_stats():
     waf_service.reset()
+    db_reset_inventory()
     return {"status": "cleared"}
 
 @router.post("/api/waf/acquire-token")

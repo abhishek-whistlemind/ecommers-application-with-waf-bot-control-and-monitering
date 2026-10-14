@@ -2,6 +2,8 @@
 
 A full-stack, enterprise-grade e-commerce application built with **Python (FastAPI)** and **React (Vite + TypeScript)**, designed to showcase and demonstrate the **AWS WAF JavaScript Application Integration SDK** and **AWS WAF Bot Control (Targeted Tier)** with real-time threat monitoring and attack simulation.
 
+> 📖 **Deep Dive Guide**: Looking for an in-depth explanation of why WAF alone is not enough, what problems modern bots pose, and what the JS SDK actually does under the hood? Read the complete [AWS WAF JS SDK Deep Dive Guide](docs/AWS_WAF_JS_SDK_DEEP_DIVE.md).
+
 ---
 
 ## 🛡️ Architecture & How the AWS WAF JS SDK Protects
@@ -61,7 +63,7 @@ AWS WAF Bot Control Targeted Tier protects modern web applications against autom
 ```bash
 cd backend
 pip install -r requirements.txt
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 Backend will be running at: `http://localhost:8000`
