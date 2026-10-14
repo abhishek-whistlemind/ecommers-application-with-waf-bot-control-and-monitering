@@ -1,6 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, ShieldAlert, ShoppingBag, Activity, RefreshCw, KeyRound, User, LogOut } from 'lucide-react';
+import { 
+  ShieldCheck, 
+  ShieldAlert, 
+  ShoppingBag, 
+  Activity, 
+  RefreshCw, 
+  KeyRound, 
+  User, 
+  LogOut, 
+  Terminal 
+} from 'lucide-react';
 import { wafIntegration } from '../services/wafIntegration';
+import { WafTelemetryModal } from './WafTelemetryModal';
 
 interface Props {
   activeTab: 'store' | 'monitoring';
@@ -23,6 +34,7 @@ export const Navbar: React.FC<Props> = ({
 }) => {
   const [token, setToken] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showTelemetryModal, setShowTelemetryModal] = useState(false);
 
   useEffect(() => {
     const unsubscribe = wafIntegration.subscribeTokenChange((t) => setToken(t));
@@ -30,6 +42,10 @@ export const Navbar: React.FC<Props> = ({
       unsubscribe();
     };
   }, []);
+
+  const handleOpenTelemetry = () => {
+    setShowTelemetryModal(true);
+  };
 
   const handleRefreshToken = async () => {
     setIsRefreshing(true);
@@ -40,6 +56,7 @@ export const Navbar: React.FC<Props> = ({
   const handleDropToken = () => {
     wafIntegration.invalidateToken();
   };
+
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-800 bg-slate-950/80 backdrop-blur-xl">
@@ -92,7 +109,7 @@ export const Navbar: React.FC<Props> = ({
 
         {/* Right side controls: Token status + User Auth + Cart */}
         <div className="flex items-center gap-3">
-          {/* AWS WAF Token Diagnostics Badge */}
+          {/* AWS WAF Token Diagnostics Badge & SDK Telemetry Inspector */}
           <div className="hidden lg:flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs">
             {token ? (
               <div className="flex items-center gap-2">
@@ -101,10 +118,21 @@ export const Navbar: React.FC<Props> = ({
                   <span className="text-slate-400 text-[10px] block font-mono">AWS WAF TOKEN</span>
                   <span className="text-emerald-400 font-mono font-medium">{token.slice(0, 16)}...</span>
                 </div>
+
+                {/* Inspect SDK Telemetry Data */}
+                <button
+                  title="Inspect SDK Telemetry: View and print data the SDK passes to WAF"
+                  onClick={handleOpenTelemetry}
+                  className="ml-1 p-1 hover:bg-cyan-950/60 rounded text-cyan-400 hover:text-cyan-300 border border-cyan-800/40 transition-colors flex items-center gap-1"
+                >
+                  <Terminal className="w-3.5 h-3.5" />
+                  <span className="text-[10px] font-mono font-semibold">SDK Data</span>
+                </button>
+
                 <button
                   title="Drop token (Simulate missing token to trigger WAF Bot Control challenge/block)"
                   onClick={handleDropToken}
-                  className="ml-1 p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-rose-400 transition-colors"
+                  className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-rose-400 transition-colors"
                 >
                   <KeyRound className="w-3.5 h-3.5" />
                 </button>
@@ -113,6 +141,16 @@ export const Navbar: React.FC<Props> = ({
               <div className="flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 text-amber-400 animate-pulse" />
                 <span className="text-amber-400 font-medium">No WAF Token</span>
+
+                <button
+                  title="Inspect SDK Telemetry Data"
+                  onClick={handleOpenTelemetry}
+                  className="ml-1 p-1 hover:bg-cyan-950/60 rounded text-cyan-400 hover:text-cyan-300 border border-cyan-800/40 transition-colors flex items-center gap-1"
+                >
+                  <Terminal className="w-3.5 h-3.5" />
+                  <span className="text-[10px] font-mono font-semibold">SDK Data</span>
+                </button>
+
                 <button
                   title="Acquire Token via JS SDK"
                   onClick={handleRefreshToken}
@@ -164,6 +202,12 @@ export const Navbar: React.FC<Props> = ({
           </button>
         </div>
       </div>
+
+      {/* Telemetry Inspector Portal Modal */}
+      <WafTelemetryModal
+        isOpen={showTelemetryModal}
+        onClose={() => setShowTelemetryModal(false)}
+      />
     </header>
   );
 };

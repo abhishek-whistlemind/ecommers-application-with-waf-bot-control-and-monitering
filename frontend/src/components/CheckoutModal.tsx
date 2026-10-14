@@ -33,7 +33,9 @@ export const CheckoutModal: React.FC<Props> = ({ isOpen, onClose, items, onOrder
     const unsubscribe = wafIntegration.subscribeTokenChange((token) => {
       setHasWafToken(!!token && wafIntegration.hasToken());
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   if (!isOpen) return null;

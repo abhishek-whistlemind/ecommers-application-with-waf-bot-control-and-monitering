@@ -1,6 +1,7 @@
 import asyncio
 import time
 import random
+import json
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request, Response, HTTPException
 from typing import Dict, Any
@@ -50,7 +51,16 @@ async def acquire_waf_token(request: Request):
     """
     body = await request.json() if request.headers.get("content-type") == "application/json" else {}
     client_ip = request.client.host if request.client else "127.0.0.1"
-    token = waf_service.generate_token(client_ip, body.get("telemetry", {}))
+    telemetry = body.get("telemetry", {})
+    
+    print("\n" + "=" * 70, flush=True)
+    print("🛡️  [AWS WAF SDK HANDSHAKE] Token Acquisition Request Received", flush=True)
+    print(f"📍 Client IP: {client_ip}", flush=True)
+    print("📦 Data passed by SDK to WAF to get token:", flush=True)
+    print(json.dumps(telemetry, indent=2), flush=True)
+    print("=" * 70 + "\n", flush=True)
+
+    token = waf_service.generate_token(client_ip, telemetry)
     return {
         "status": "success",
         "token": token,
@@ -58,26 +68,6 @@ async def acquire_waf_token(request: Request):
         "ttl_seconds": 900
     }
 
-@router.post("/api/waf/solve-challenge")
-async def solve_challenge(request: Request):
-    """
-    Endpoint called when a client receives a 405 Challenge and renders the
-    AWS WAF CAPTCHA modal. Upon successful puzzle solve, this verifies and
-    returns a refreshed valid token.
-    """
-    body = await request.json()
-    solution = body.get("solution")
-    # Verify puzzle solution
-    if not solution or solution != "valid_human_verification":
-        raise HTTPException(status_code=400, detail="CAPTCHA puzzle validation failed")
-
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    refreshed_token = waf_service.generate_token(client_ip, {"challenge_solved": True, "ts": time.time()})
-    return {
-        "status": "CHALLENGE_SOLVED",
-        "token": refreshed_token,
-        "message": "AWS WAF Challenge successfully cleared. Request can proceed."
-    }
 
 @router.post("/api/monitoring/simulate-attack")
 async def simulate_attack(sim_req: AttackSimulationRequest):

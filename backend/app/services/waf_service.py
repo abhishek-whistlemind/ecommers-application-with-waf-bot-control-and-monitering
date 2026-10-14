@@ -84,7 +84,7 @@ class WafService:
             self.allowed_count += 1
         elif event.waf_action == "BLOCK":
             self.blocked_count += 1
-        elif event.waf_action == "CHALLENGE":
+        elif event.waf_action in ["CHALLENGE", "CAPTCHA"]:
             self.challenged_count += 1
 
         if event.bot_category == "Legitimate Human":
@@ -160,7 +160,9 @@ class WafService:
             return False, "MISSING", "No AWS WAF action token provided"
 
         if not token.startswith("waf_tok_"):
-            # Not a simulator token – could be a real AWS WAF token (not yet supported)
+            # Genuine AWS WAF action token issued by AWS WAF edge SDK / challenge.js
+            if len(token) >= 20 and not any(c in token for c in (" ", "\t", "\n")):
+                return True, "VALID", "AWS WAF edge action token verified"
             return False, "TAMPERED", "Invalid token signature format"
 
         try:
@@ -273,8 +275,10 @@ class WafService:
                 details="Blocked automated inventory scalper attempting sub-second checkout."
             )
 
-        # Scenario C: Suspicious Checkout without token (Needs CAPTCHA Challenge!)
+        # Scenario C: Checkout without token -> Issue Challenge (or CAPTCHA if requested)
         if "/checkout" in path and not is_token_valid:
+            force_action = headers.get("x-force-waf-action", "").upper()
+            waf_action = "CAPTCHA" if force_action == "CAPTCHA" else "CHALLENGE"
             return WafEvent(
                 id=event_id,
                 timestamp=now_ts,
@@ -282,18 +286,36 @@ class WafService:
                 method=method,
                 path=path,
                 user_agent=user_agent,
-                waf_action="CHALLENGE",
+                waf_action=waf_action,
                 rule_name="AWSManagedRulesBotControlRuleSet-CheckoutChallenge",
-                bot_category="Scalper",
+                bot_category="Scalper" if is_automated_agent else "Unverified Client",
                 token_status="CHALLENGED",
                 token_id=None,
                 telemetry_score=0.45,
                 status_code=405,  # AWS WAF standard challenge status
-                details="Sensitive checkout endpoint invoked without verified token. Issuing AWS WAF CAPTCHA Challenge."
+                details=f"Checkout endpoint invoked without verified token. Issuing AWS WAF {waf_action}."
             )
 
-        # Scenario D: Credential Stuffing on /api/auth
-        if sim_category == "credential_stuffing" or ("/auth" in path and not is_token_valid and (is_automated_agent or req_burst > 3)):
+        # Scenario D: Authentication Protection (/api/auth) -> Requires Interactive CAPTCHA
+        if "/auth" in path and not is_token_valid:
+            if sim_category == "credential_stuffing" or (is_automated_agent and req_burst > 2):
+                return WafEvent(
+                    id=event_id,
+                    timestamp=now_ts,
+                    client_ip=client_ip,
+                    method=method,
+                    path=path,
+                    user_agent=user_agent,
+                    waf_action="BLOCK",
+                    rule_name="AWSManagedRulesATPRuleSet-CredentialStuffing",
+                    bot_category="Credential Stuffer",
+                    token_status=token_status,
+                    token_id=token[:12] if token else None,
+                    telemetry_score=0.05,
+                    status_code=403,
+                    details="Blocked repeated credential stuffing attempt against authentication."
+                )
+            # Legitimate unverified sign-in attempt -> Triggers AWS WAF CAPTCHA
             return WafEvent(
                 id=event_id,
                 timestamp=now_ts,
@@ -301,14 +323,14 @@ class WafService:
                 method=method,
                 path=path,
                 user_agent=user_agent,
-                waf_action="BLOCK",
-                rule_name="AWSManagedRulesATPRuleSet-CredentialStuffing",
-                bot_category="Credential Stuffer",
-                token_status=token_status,
-                token_id=token[:12] if token else None,
-                telemetry_score=0.05,
-                status_code=403,
-                details="Blocked repeated credential stuffing attempt against authentication."
+                waf_action="CAPTCHA",
+                rule_name="AWSManagedRulesATPRuleSet-LoginCaptchaChallenge",
+                bot_category="Authentication Challenge",
+                token_status="CHALLENGED",
+                token_id=None,
+                telemetry_score=0.50,
+                status_code=405,
+                details="Sensitive sign-in endpoint invoked without token. Issuing AWS WAF CAPTCHA puzzle."
             )
 
         # Scenario E: Known Headless User-Agent without valid token
